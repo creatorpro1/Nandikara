@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Galeri Koleksi Foto & Video</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      display: flex;
+      height: 100vh;
+      background: #f0f0f0;
+    }
+    #sidebar {
+      width: 220px;
+      background: #2c3e50;
+      color: white;
+      padding: 15px;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+    }
+    #sidebar h2 {
+      margin-top: 0;
+    }
+    #collections {
+      flex-grow: 1;
+      overflow-y: auto;
+      margin-bottom: 10px;
+    }
+    #collections button {
+      display: block;
+      width: 100%;
+      margin-bottom: 8px;
+      padding: 8px;
+      background: #34495e;
+      border: none;
+      border-radius: 5px;
+      color: white;
+      cursor: pointer;
+      text-align: left;
+    }
+    #collections button.active {
+      background: #1abc9c;
+      font-weight: bold;
+    }
+    #add-collection-btn {
+      padding: 8px;
+      border: none;
+      border-radius: 5px;
+      background: #16a085;
+      color: white;
+      cursor: pointer;
+    }
+    #main {
+      flex-grow: 1;
+      padding: 15px;
+      overflow-y: auto;
+      box-sizing: border-box;
+    }
+    #upload-btn {
+      margin-bottom: 20px;
+    }
+    #gallery {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 15px;
+    }
+    .media-item {
+      position: relative;
+      border-radius: 10px;
+      overflow: hidden;
+      background: white;
+      box-shadow: 0 3px 6px rgba(0,0,0,0.1);
+    }
+    .media-item img,
+    .media-item video {
+      width: 100%;
+      height: auto;
+      cursor: pointer;
+    }
+    .delete-btn {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      background: rgba(231, 76, 60, 0.8);
+      color: white;
+      border: none;
+      border-radius: 50%;
+      width: 24px;
+      height: 24px;
+      font-weight: bold;
+      cursor: pointer;
+      z-index: 2;
+    }
+    .delete-btn:hover {
+      background: rgba(192, 57, 43, 0.9);
+    }
+    #lightbox {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100vw; height: 100vh;
+      background: rgba(0,0,0,0.85);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 999;
+      flex-direction: column;
+    }
+    #lightbox img,
+    #lightbox video {
+      max-width: 90vw;
+      max-height: 90vh;
+      border-radius: 10px;
+      box-shadow: 0 0 20px #000;
+    }
+    #lightbox .close-btn {
+      position: fixed;
+      top: 20px;
+      right: 30px;
+      font-size: 36px;
+      color: white;
+      cursor: pointer;
+      z-index: 1000;
+    }
+  </style>
+</head>
+<body>
+
+<div id="sidebar">
+  <h2>Koleksi</h2>
+  <div id="collections"></div>
+  <button id="add-collection-btn">+ Tambah Koleksi</button>
+</div>
+
+<div id="main">
+  <input type="file" id="upload-btn" multiple accept="image/*,video/*" />
+  <div id="gallery"></div>
+</div>
+
+<div id="lightbox">
+  <span class="close-btn">&times;</span>
+</div>
+
+<script>
+  let db;
+  let currentCollectionId = null;
+
+  const request = indexedDB.open("MediaCollectionsDB", 1);
+
+  request.onupgradeneeded = function(e) {
+    db = e.target.result;
+    if (!db.objectStoreNames.contains("collections")) {
+      const collectionStore = db.createObjectStore("collections", { keyPath: "id", autoIncrement: true });
+      collectionStore.createIndex("name", "name", { unique: true });
+    }
+    if (!db.objectStoreNames.contains("media")) {
+      const mediaStore = db.createObjectStore("media", { keyPath: "id", autoIncrement: true });
+      mediaStore.createIndex("collectionId", "collectionId");
+    }
+  };
+
+  request.onsuccess = function(e) {
+    db = e.target.result;
+    loadCollections();
+  };
+
+  const collectionsDiv = document.getElementById("collections");
+  const addCollectionBtn = document.getElementById("add-collection-btn");
+  const uploadBtn = document.getElementById("upload-btn");
+  const gallery = document.getElementById("gallery");
+  const lightbox = document.getElementById("lightbox");
+
+  addCollectionBtn.onclick = function() {
+    const name = prompt("Masukkan nama koleksi:");
+    if (name) {
+      const transaction = db.transaction("collections", "readwrite");
+      const store = transaction.objectStore("collections");
+      const addReq = store.add({ name: name.trim() });
+
+      addReq.onsuccess = () => loadCollections();
+      addReq.onerror = () => alert("Nama koleksi sudah ada.");
+    }
+  };
+
+  function loadCollections() {
+    collectionsDiv.innerHTML = "";
+    const transaction = db.transaction("collections", "readonly");
+    const store = transaction.objectStore("collections");
+
+    store.openCursor().onsuccess = function(e) {
+      const cursor = e.target.result;
+      if (cursor) {
+        const col = cursor.value;
+
+        const wrapper = document.createElement("div");
+        wrapper.style.display = "flex";
+        wrapper.style.alignItems = "center";
+        wrapper.style.justifyContent = "space-between";
+        wrapper.style.marginBottom = "5px";
+
+        const btn = document.createElement("button");
+        btn.textContent = col.name;
+        btn.dataset.id = col.id;
+        btn.classList.toggle("active", col.id === currentCollectionId);
+        btn.style.flexGrow = "1";
+        btn.onclick = () => setActiveCollection(col.id);
+
+        const delBtn = document.createElement("button");
+        delBtn.textContent = "🗑";
+        delBtn.style.marginLeft = "5px";
+        delBtn.style.background = "#e74c3c";
+        delBtn.style.color = "white";
+        delBtn.style.border = "none";
+        delBtn.style.borderRadius = "5px";
+        delBtn.style.padding = "4px 6px";
+        delBtn.style.cursor = "pointer";
+        delBtn.onclick = () => deleteCollection(col.id);
+
+        wrapper.appendChild(btn);
+        wrapper.appendChild(delBtn);
+        collectionsDiv.appendChild(wrapper);
+
+        cursor.continue();
+      } else {
+        if (!currentCollectionId) {
+          createDefaultCollection();
+        }
+      }
+    };
+  }
+
+  function createDefaultCollection() {
+    const transaction = db.transaction("collections", "readwrite");
+    const store = transaction.objectStore("collections");
+    const addReq = store.add({ name: "Umum" });
+    addReq.onsuccess = e => setActiveCollection(e.target.result);
+  }
+
+  function setActiveCollection(id) {
+    currentCollectionId = id;
+    [...collectionsDiv.children].forEach(wrapper => {
+      const btn = wrapper.querySelector("button");
+      btn.classList.toggle("active", btn.dataset.id == id);
+    });
+    loadMediaInCollection(id);
+  }
+
+  uploadBtn.onchange = function(e) {
+    if (!currentCollectionId) {
+      alert("Pilih koleksi terlebih dahulu.");
+      return;
+    }
+    const files = Array.from(e.target.files);
+    const transaction = db.transaction("media", "readwrite");
+    const store = transaction.objectStore("media");
+
+    files.forEach(file => {
+      store.add({
+        collectionId: currentCollectionId,
+        type: file.type.startsWith("video") ? "video" : "image",
+        file
+      });
+    });
+
+    transaction.oncomplete = () => loadMediaInCollection(currentCollectionId);
+    uploadBtn.value = "";
+  };
+
+  function loadMediaInCollection(id) {
+    gallery.innerHTML = "";
+    const transaction = db.transaction("media", "readonly");
+    const store = transaction.objectStore("media");
+    const index = store.index("collectionId");
+    const range = IDBKeyRange.only(id);
+
+    index.openCursor(range).onsuccess = function(e) {
+      const cursor = e.target.result;
+      if (cursor) {
+        displayMediaItem(cursor.value, cursor.primaryKey);
+        cursor.continue();
+      }
+    };
+  }
+
+  function displayMediaItem(item, id) {
+    const div = document.createElement("div");
+    div.className = "media-item";
+
+    let media;
+    if (item.type === "image") {
+      media = document.createElement("img");
+    } else {
+      media = document.createElement("video");
+      media.controls = false;
+      media.autoplay = true;
+      media.loop = true;
+      media.muted = true;
+    }
+    media.src = URL.createObjectURL(item.file);
+    media.onclick = () => openLightbox(item);
+    div.appendChild(media);
+
+    const delBtn = document.createElement("button");
+    delBtn.className = "delete-btn";
+    delBtn.textContent = "×";
+    delBtn.onclick = () => {
+      if (confirm("Yakin ingin menghapus media ini?")) {
+        const transaction = db.transaction("media", "readwrite");
+        const store = transaction.objectStore("media");
+        store.delete(id).onsuccess = () => loadMediaInCollection(currentCollectionId);
+      }
+    };
+    div.appendChild(delBtn);
+
+    gallery.appendChild(div);
+  }
+
+  function deleteCollection(id) {
+    if (!confirm("Yakin ingin menghapus koleksi ini beserta semua medianya?")) return;
+
+    const deleteMediaTransaction = db.transaction("media", "readwrite");
+    const mediaStore = deleteMediaTransaction.objectStore("media");
+    const index = mediaStore.index("collectionId");
+    const range = IDBKeyRange.only(id);
+
+    index.openCursor(range).onsuccess = function(e) {
+      const cursor = e.target.result;
+      if (cursor) {
+        mediaStore.delete(cursor.primaryKey);
+        cursor.continue();
+      }
+    };
+
+    deleteMediaTransaction.oncomplete = function() {
+      const deleteColTransaction = db.transaction("collections", "readwrite");
+      const colStore = deleteColTransaction.objectStore("collections");
+      colStore.delete(id).onsuccess = function() {
+        if (currentCollectionId == id) currentCollectionId = null;
+        loadCollections();
+        gallery.innerHTML = "";
+      };
+    };
+  }
+
+  function openLightbox(item) {
+    lightbox.innerHTML = "";
+    const closeBtn = document.createElement("span");
+    closeBtn.className = "close-btn";
+    closeBtn.textContent = "×";
+    closeBtn.onclick = closeLightbox;
+    lightbox.appendChild(closeBtn);
+
+    let media;
+    if (item.type === "image") {
+      media = document.createElement("img");
+    } else {
+      media = document.createElement("video");
+      media.controls = true;
+      media.autoplay = true;
+    }
+    media.src = URL.createObjectURL(item.file);
+    lightbox.appendChild(media);
+    lightbox.style.display = "flex";
+  }
+
+  function closeLightbox() {
+    lightbox.style.display = "none";
+    lightbox.innerHTML = '<span class="close-btn">&times;</span>';
+  }
+
+  document.querySelector("#lightbox .close-btn").onclick = closeLightbox;
+</script>
+
+</body>
+</html>
